@@ -1,20 +1,37 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from keybert import KeyBERT
-from konlpy.tag import Okt
 from bs4 import BeautifulSoup
 import requests
 import re
+import os
+import jpype
+import torch
+from transformers import BertTokenizer, BertForSequenceClassification
+from konlpy.tag import Okt
+
+# Java 환경변수 설정
+os.environ['JAVA_HOME'] = '/Library/Java/JavaVirtualMachines/adoptopenjdk-8.jdk/Contents/Home'
+
+# JVM 초기화
+jvm_path = "/Library/Java/JavaVirtualMachines/temurin-8.jdk/Contents/Home/lib/server/libjvm.dylib"
+if not jpype.isJVMStarted():
+    jpype.startJVM(jvm_path, "-Dfile.encoding=UTF8", convertStrings=False)
 
 # Flask 초기화
 app = Flask(__name__)
 CORS(app)
 
-# KeyBERT 초기화
+# 모델 초기화
 kw_model = KeyBERT()
-
-# KoNLPy의 Okt 형태소 분석기 초기화
 okt = Okt()
+
+# 감정 분석 모델 로드
+emotion_model_path = "/Users/pjy/Desktop/DSBA5-7/DSBAGit/AI/kobert_emotion_model.pth"
+emotion_model = BertForSequenceClassification.from_pretrained("monologg/kobert", num_labels=3)
+emotion_model.load_state_dict(torch.load(emotion_model_path, map_location=torch.device('cpu')))
+emotion_model.eval()
+tokenizer = BertTokenizer.from_pretrained("monologg/kobert")
 
 # 텍스트 전처리 함수
 def preprocess_text(text):
@@ -27,35 +44,40 @@ def crawl_text_from_url(url):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
-    response = requests.get(url, headers=headers)
-    soup = BeautifulSoup(response.text, 'html.parser')
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
 
-    # 제목 추출: 여러 후보 중 먼저 찾은 요소를 사용
-    title_candidates = ['h1', 'h2', 'title']
-    title_text = ""
-    for candidate in title_candidates:
-        title = soup.find(candidate)
-        if title:
-            title_text = title.get_text(strip=True)
-            break
+        # 제목 추출
+        title_candidates = ['h1', 'h2', 'title']
+        title_text = ""
+        for candidate in title_candidates:
+            title = soup.find(candidate)
+            if title:
+                title_text = title.get_text(strip=True)
+                break
 
-    # 본문 추출: 여러 후보 중 먼저 찾은 요소를 사용
-    body_candidates = [
-        {'id': 'content'}, 
-        {'class': 'article-body'}, 
-        {'class': 'content-body'},
-        {'class': 'post-content'},
-        {'class': 'entry-content'},
-        {'class': 'news-body'}
-    ]
-    body_text = ""
-    for candidate in body_candidates:
-        body = soup.find('div', candidate)
-        if body:
-            body_text = body.get_text(strip=True)
-            break
+        # 본문 추출
+        body_candidates = [
+            {'id': 'content'},
+            {'class': 'article-body'},
+            {'class': 'content-body'},
+            {'class': 'post-content'},
+            {'class': 'entry-content'},
+            {'class': 'news-body'}
+        ]
+        body_text = ""
+        for candidate in body_candidates:
+            body = soup.find('div', candidate)
+            if body:
+                body_text = body.get_text(strip=True)
+                break
 
-    return f"{title_text} {body_text}"
+        return f"{title_text} {body_text}"
+
+    except requests.RequestException as e:
+        raise RuntimeError(f"Failed to fetch the URL: {str(e)}")
 
 # POS tagging을 활용한 주어, 지역, 날짜 추출 함수
 def extract_contextual_keywords(text):
@@ -75,6 +97,17 @@ def extract_contextual_keywords(text):
     
     return list(set(subjects)), list(set(locations)), list(set(dates))
 
+# 감정 분석 함수
+def analyze_emotion(text):
+    inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
+    with torch.no_grad():
+        outputs = emotion_model(**inputs)
+    logits = outputs.logits
+    predicted_class = torch.argmax(logits, dim=1).item()
+
+    emotion_map = {0: "Negative", 1: "Neutral", 2: "Positive"}
+    return emotion_map.get(predicted_class, "Unknown")
+
 # 키워드 추출 함수
 def extract_keywords_with_pos(text):
     clean_text = preprocess_text(text)
@@ -90,14 +123,24 @@ def extract_keywords_with_pos(text):
     combined_keywords = list(set(keybert_keywords + subjects + locations + dates))
     return combined_keywords[:10]  # 최대 10개의 키워드 반환
 
+# 외부 기사 검색 함수
+def search_similar_articles(keywords):
+    # Google News API 또는 다른 API 호출
+    pass
+
+# 기사 비교 및 신뢰도 평가 함수
+def evaluate_trustworthiness(original_article, similar_articles):
+    # 키워드 유사도, 감정 일치도 계산
+    pass
+
 # Flask API 엔드포인트
-@app.route('/extract_keywords', methods=['POST'])
-def extract_keywords():
+@app.route('/analyze', methods=['POST'])
+def analyze():
     data = request.json
     url = data.get('url', '')
 
-    if not url:
-        return jsonify({"error": "No URL provided"}), 400
+    if not url or not url.startswith("http"):
+        return jsonify({"error": "Invalid or missing URL"}), 400
 
     try:
         # URL에서 텍스트 크롤링
@@ -105,7 +148,14 @@ def extract_keywords():
 
         # 키워드 추출
         keywords = extract_keywords_with_pos(text)
-        return jsonify({"keywords": keywords})
+
+        # 감정 분석
+        emotion = analyze_emotion(text)
+
+        return jsonify({
+            "keywords": keywords,
+            "emotion": emotion
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
