@@ -147,18 +147,48 @@ def analyze():
         text = crawl_text_from_url(url)
 
         # 키워드 추출
-        keywords = extract_keywords_with_pos(text)
+        keywords = kw_model.extract_keywords(text, keyphrase_ngram_range=(1, 1), top_n=10)
+        extracted_keywords = [kw[0] for kw in keywords]
+
+        # 유사 기사 검색
+        similar_articles = search_similar_articles(extracted_keywords)
+
+        # 각 유사 기사에서 텍스트 크롤링
+        similar_articles_texts = []
+        for article in similar_articles:
+            try:
+                article_text = crawl_text_from_url(article['url'])
+                similar_articles_texts.append({
+                    "title": article['title'],
+                    "url": article['url'],
+                    "text": article_text
+                })
+            except Exception as e:
+                # 특정 기사 크롤링 실패 시 스킵
+                print(f"Failed to crawl article at {article['url']}: {str(e)}")
+
+        # 유사도 계산
+        candidate_texts = [article["text"] for article in similar_articles_texts]
+        similarities = calculate_similarity(text, candidate_texts)
 
         # 감정 분석
-        emotion = analyze_emotion(text)
+        original_emotion = analyze_emotion(text)
+        similar_articles_emotions = [analyze_emotion(article["text"]) for article in similar_articles_texts]
+
+        # 결과 구성
+        results = []
+        for article, similarity, emotion in zip(similar_articles_texts, similarities, similar_articles_emotions):
+            results.append({
+                "title": article['title'],
+                "url": article['url'],
+                "similarity": similarity,
+                "emotion": emotion
+            })
 
         return jsonify({
-            "keywords": keywords,
-            "emotion": emotion
+            "original_keywords": extracted_keywords,
+            "original_emotion": original_emotion,
+            "similar_articles": results
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
-# Flask 실행
-if __name__ == '__main__':
-    app.run(debug=True)
