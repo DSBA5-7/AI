@@ -2,11 +2,13 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from keybert import KeyBERT
 from konlpy.tag import Okt
+from bs4 import BeautifulSoup
+import requests
 import re
 
 # Flask 초기화
 app = Flask(__name__)
-CORS(app)  # CORS 활성화 (필요한 경우)
+CORS(app)
 
 # KeyBERT 초기화
 kw_model = KeyBERT()
@@ -19,6 +21,41 @@ def preprocess_text(text):
     text = re.sub(r"[^\w\s]", " ", text)  # 특수문자 제거
     text = re.sub(r"\s+", " ", text).strip()  # 중복 공백 제거
     return text
+
+# 크롤링 함수: 여러 HTML 구조 처리
+def crawl_text_from_url(url):
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+    response = requests.get(url, headers=headers)
+    soup = BeautifulSoup(response.text, 'html.parser')
+
+    # 제목 추출: 여러 후보 중 먼저 찾은 요소를 사용
+    title_candidates = ['h1', 'h2', 'title']
+    title_text = ""
+    for candidate in title_candidates:
+        title = soup.find(candidate)
+        if title:
+            title_text = title.get_text(strip=True)
+            break
+
+    # 본문 추출: 여러 후보 중 먼저 찾은 요소를 사용
+    body_candidates = [
+        {'id': 'content'}, 
+        {'class': 'article-body'}, 
+        {'class': 'content-body'},
+        {'class': 'post-content'},
+        {'class': 'entry-content'},
+        {'class': 'news-body'}
+    ]
+    body_text = ""
+    for candidate in body_candidates:
+        body = soup.find('div', candidate)
+        if body:
+            body_text = body.get_text(strip=True)
+            break
+
+    return f"{title_text} {body_text}"
 
 # POS tagging을 활용한 주어, 지역, 날짜 추출 함수
 def extract_contextual_keywords(text):
@@ -51,20 +88,26 @@ def extract_keywords_with_pos(text):
 
     # 키워드 통합
     combined_keywords = list(set(keybert_keywords + subjects + locations + dates))
-    return combined_keywords
+    return combined_keywords[:10]  # 최대 10개의 키워드 반환
 
 # Flask API 엔드포인트
 @app.route('/extract_keywords', methods=['POST'])
 def extract_keywords():
     data = request.json
-    text = data.get('text', '')
+    url = data.get('url', '')
 
-    if not text:
-        return jsonify({"error": "No text provided"}), 400
+    if not url:
+        return jsonify({"error": "No URL provided"}), 400
 
-    # 키워드 추출
-    keywords = extract_keywords_with_pos(text)
-    return jsonify({"keywords": keywords})
+    try:
+        # URL에서 텍스트 크롤링
+        text = crawl_text_from_url(url)
+
+        # 키워드 추출
+        keywords = extract_keywords_with_pos(text)
+        return jsonify({"keywords": keywords})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # Flask 실행
 if __name__ == '__main__':
