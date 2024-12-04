@@ -4,6 +4,7 @@ from keybert import KeyBERT
 from bs4 import BeautifulSoup
 import requests
 import re
+import os
 import torch
 from transformers import BertTokenizer, BertForSequenceClassification
 
@@ -15,11 +16,15 @@ CORS(app)
 kw_model = KeyBERT()
 
 # 감정 분석 모델 로드
-emotion_model_path = "/Users/pjy/Desktop/DSBA5-7/DSBAGit/AI/kobert_emotion_model.pth"
+emotion_model_path = "/path/to/kobert_emotion_model.pth"
 emotion_model = BertForSequenceClassification.from_pretrained("monologg/kobert", num_labels=3)
 emotion_model.load_state_dict(torch.load(emotion_model_path, map_location=torch.device('cpu')))
 emotion_model.eval()
 tokenizer = BertTokenizer.from_pretrained("monologg/kobert")
+
+# Google Custom Search API 설정
+API_KEY = "your_google_api_key"  # Google Custom Search API 키
+SEARCH_ENGINE_ID = "your_search_engine_id"  # Google Custom Search 엔진 ID
 
 # 텍스트 전처리 함수
 def preprocess_text(text):
@@ -63,9 +68,14 @@ def crawl_text_from_url(url):
                 break
 
         return f"{title_text} {body_text}"
-
     except requests.RequestException as e:
         raise RuntimeError(f"Failed to fetch the URL: {str(e)}")
+
+# 키워드 추출 함수
+def extract_keywords_with_regex(text):
+    clean_text = preprocess_text(text)
+    keywords = kw_model.extract_keywords(clean_text, keyphrase_ngram_range=(1, 1), top_n=10)
+    return [kw[0] for kw in keywords]
 
 # 감정 분석 함수
 def analyze_emotion(text):
@@ -78,27 +88,30 @@ def analyze_emotion(text):
     emotion_map = {0: "Negative", 1: "Neutral", 2: "Positive"}
     return emotion_map.get(predicted_class, "Unknown")
 
-# 키워드 추출 함수
-def extract_keywords_with_regex(text):
-    clean_text = preprocess_text(text)
-
-    # KeyBERT 키워드 추출
-    keybert_keywords = kw_model.extract_keywords(clean_text, keyphrase_ngram_range=(1, 1), top_n=10)
-    keybert_keywords = [kw[0] for kw in keybert_keywords]
-
-    return keybert_keywords[:10]  # 최대 10개의 키워드 반환
-
 # 유사 기사 검색 함수
 def search_similar_articles(keywords):
-    # 예제: Google News API 또는 다른 API 호출
-    # Placeholder로 9개의 유사 기사 반환
-    return [{"title": f"Sample Article {i}", "url": f"http://example.com/article{i}"} for i in range(1, 10)]
+    search_url = "https://www.googleapis.com/customsearch/v1"
+    params = {
+        "key": API_KEY,
+        "cx": SEARCH_ENGINE_ID,
+        "q": " ".join(keywords),
+        "num": 9  # 최대 9개의 검색 결과 반환
+    }
+    response = requests.get(search_url, params=params)
+    response.raise_for_status()
+    results = response.json()
+    similar_articles = []
+    for item in results.get("items", []):
+        similar_articles.append({
+            "title": item.get("title"),
+            "url": item.get("link")
+        })
+    return similar_articles
 
 # 신뢰도 평가 함수
 def calculate_trustworthiness(input_text, similar_articles):
     weights = {"keyword": 0.4, "emotion": 0.3, "topic": 0.2, "sensationalism": 0.1}
 
-    # 입력된 기사 키워드 및 감정 분석
     input_keywords = extract_keywords_with_regex(input_text)
     input_emotion = analyze_emotion(input_text)
 
@@ -115,13 +128,12 @@ def calculate_trustworthiness(input_text, similar_articles):
         if input_emotion == article_emotion:
             total_emotion_similarity += 1
 
-        # 부정적 감정이 많은 경우 자극성 점수 감소
         if article_emotion == "Negative":
             sensationalism_score -= 0.1
 
     keyword_similarity_score = total_keyword_similarity / len(similar_articles)
     emotion_similarity_score = total_emotion_similarity / len(similar_articles)
-    topic_similarity_score = 0.8  # Placeholder 값
+    topic_similarity_score = 0.8
 
     trustworthiness_score = (
         weights["keyword"] * keyword_similarity_score +
@@ -148,16 +160,10 @@ def analyze():
         return jsonify({"error": "Invalid or missing URL"}), 400
 
     try:
-        # URL에서 텍스트 크롤링
         text = crawl_text_from_url(url)
-
-        # 키워드 추출
         keywords = extract_keywords_with_regex(text)
-
-        # 유사 기사 검색
         similar_articles = search_similar_articles(keywords)
 
-        # 각 유사 기사에서 텍스트 크롤링 및 분석
         for article in similar_articles:
             try:
                 article_text = crawl_text_from_url(article['url'])
@@ -167,7 +173,6 @@ def analyze():
             except Exception as e:
                 article["error"] = str(e)
 
-        # 신뢰도 계산
         trustworthiness = calculate_trustworthiness(text, similar_articles)
 
         return jsonify({
