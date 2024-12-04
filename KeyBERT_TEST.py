@@ -103,16 +103,24 @@ def extract_keywords_with_regex(text):
     keywords = kw_model.extract_keywords(clean_text, keyphrase_ngram_range=(1, 1), top_n=10)
     return [kw[0] for kw in keywords]
 
-# 감정 분석 함수
 def analyze_emotion(text):
-    inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
+    # 입력 텍스트를 BERT 모델에 맞게 토크나이즈
+    inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512).to(device)
+    
     with torch.no_grad():
+        # 모델에 입력을 주고 결과 얻기
         outputs = emotion_model(**inputs)
-    logits = outputs.logits
-    predicted_class = torch.argmax(logits, dim=1).item()
-
-    emotion_map = {0: "Negative", 1: "Neutral", 2: "Positive"}
-    return emotion_map.get(predicted_class, "Unknown")
+    
+    # Softmax를 통해 확률 계산
+    prob = torch.nn.functional.softmax(outputs.logits, dim=1).cpu().numpy()[0]
+    
+    # 각 감정 클래스에 대한 확률 매핑
+    emotion_probs = dict(zip(emotion_classes, prob))
+    
+    # 가장 높은 확률의 감정을 예측
+    predicted_emotion = max(emotion_probs, key=emotion_probs.get)
+    
+    return predicted_emotion, emotion_probs
 
 # 유사 기사 검색 함수
 def search_similar_articles(keywords):
@@ -176,7 +184,6 @@ def calculate_trustworthiness(input_text, similar_articles):
         "sensationalism_score": sensationalism_score
     }
 
-# Flask API 엔드포인트
 @app.route('/analyze', methods=['POST'])
 def analyze():
     data = request.json
@@ -186,24 +193,52 @@ def analyze():
         return jsonify({"error": "Invalid or missing URL"}), 400
 
     try:
+        # 1. 원본 기사 크롤링
+        print(f"Input URL: {url}")
         text = crawl_text_from_url(url)
-        keywords = extract_keywords_with_regex(text)
-        similar_articles = search_similar_articles(keywords)
 
+        # 2. 키워드 및 감정 분석
+        keywords = extract_keywords_with_regex(text)
+        original_emotion = analyze_emotion(text)
+        print(f"Original Article Keywords: {keywords}")
+        print(f"Original Article Emotion: {original_emotion}")
+
+        # 3. 유사 기사 검색
+        similar_articles = search_similar_articles(keywords)
+        print("Similar Articles Found:")
+        for i, article in enumerate(similar_articles, start=1):
+            print(f"  {i}. Title: {article['title']}, URL: {article['url']}")
+
+        # 4. 유사 기사 분석
         for article in similar_articles:
             try:
                 article_text = crawl_text_from_url(article['url'])
                 article["text"] = article_text
                 article["keywords"] = extract_keywords_with_regex(article_text)
                 article["emotion"] = analyze_emotion(article_text)
+
+                # 출력: 각 유사 기사의 분석 결과
+                print(f"\nAnalyzed Similar Article:")
+                print(f"  Title: {article['title']}")
+                print(f"  URL: {article['url']}")
+                print(f"  Keywords: {article['keywords']}")
+                print(f"  Emotion: {article['emotion']}")
             except Exception as e:
                 article["error"] = str(e)
+                print(f"Error processing article '{article['title']}': {str(e)}")
 
+        # 5. 신뢰도 계산
         trustworthiness = calculate_trustworthiness(text, similar_articles)
+        print(f"\nTrustworthiness Score: {trustworthiness['trustworthiness_score']}")
+        print(f"  - Keyword Similarity: {trustworthiness['keyword_similarity']}")
+        print(f"  - Emotion Similarity: {trustworthiness['emotion_similarity']}")
+        print(f"  - Topic Similarity: {trustworthiness['topic_similarity']}")
+        print(f"  - Sensationalism Score: {trustworthiness['sensationalism_score']}")
 
+        # 6. 결과 반환
         return jsonify({
             "original_keywords": keywords,
-            "original_emotion": analyze_emotion(text),
+            "original_emotion": original_emotion,
             "similar_articles": similar_articles,
             "trustworthiness": trustworthiness
         })
