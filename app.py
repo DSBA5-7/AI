@@ -93,7 +93,8 @@ def search_similar_articles(keywords):
         "key": API_KEY,  # Google API 키
         "cx": SEARCH_ENGINE_ID,  # 검색 엔진 ID
         "q": keywords,
-        "num": 5
+        "num": 5,
+        "dateRestrict": "y1"  # 최근 1개월 내의 기사만 검색 (w1: 1주일, y1: 1년)
     }
     try:
         response = requests.get(search_url, params=params)
