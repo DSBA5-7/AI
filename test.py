@@ -5,10 +5,11 @@ from bs4 import BeautifulSoup
 import requests
 import re
 import torch
+import pandas as pd
 from transformers import BertTokenizer, BertForSequenceClassification
 from sentence_transformers import SentenceTransformer, util
-import gdown  # Google Drive에서 파일을 다운로드 하기 위한 라이브러리
-import os  # 파일 경로 확인을 위한 모듈
+import gdown
+import os
 
 # Flask 초기화
 app = Flask(
@@ -23,18 +24,15 @@ kw_model = KeyBERT()
 
 # Google Drive에서 .pth 파일 다운로드
 def download_model_from_drive():
-    # 구글 드라이브에서 모델 파일을 다운로드
-    file_id = "1uS2PvnVaX1geCbv34MoWi7y1TF9wM_I6"  # 여기에 파일 ID를 입력하세요.
+    file_id = "1uS2PvnVaX1geCbv34MoWi7y1TF9wM_I6"
     output_path = 'kobert_emotion_model.pth'
-    
-    # 파일이 이미 존재하면 다운로드하지 않음
     if not os.path.exists(output_path):
         url = f'https://drive.google.com/uc?id={file_id}'
         gdown.download(url, output_path, quiet=False)
     return output_path
 
 # 감정 분석 모델 로드
-emotion_model_path = download_model_from_drive()  # 구글 드라이브에서 모델 파일을 다운로드
+emotion_model_path = download_model_from_drive()
 emotion_model = BertForSequenceClassification.from_pretrained("monologg/kobert", num_labels=7)
 emotion_model.load_state_dict(torch.load(emotion_model_path, map_location=torch.device('cpu')))
 emotion_model.eval()
@@ -47,9 +45,16 @@ similarity_model = SentenceTransformer('paraphrase-MiniLM-L6-v2')
 API_KEY = "AIzaSyAk_I4aQfzfPFqfaUMu3s3yGGMH826r86M"
 SEARCH_ENGINE_ID = "50c1f019089e446d1"
 
+# CSV 파일 기반 양성/음성 단어 로드
+sentiment_words_file = "C:/AI-5/sentiment_words.csv"  # CSV 파일 경로
+data = pd.read_csv(sentiment_words_file)
+positive_words = data[data["감정"] == "양성"]["단어"].tolist()
+negative_words = data[data["감정"] == "음성"]["단어"].tolist()
+
 # 감정 점수 가중치
 EMOTION_WEIGHT = 0.2
-SIMILARITY_WEIGHT = 0.8
+SIMILARITY_WEIGHT = 0.7
+SENTIMENT_WEIGHT = 0.1
 
 # 텍스트 전처리 함수
 def preprocess_text(text):
@@ -71,7 +76,7 @@ def extract_keywords_as_single_phrase(text):
 
 # 감정 분석 함수
 def analyze_emotion(text):
-    if not text.strip():  # 텍스트가 비어 있으면 기본값 반환
+    if not text.strip():
         return "Unknown"
 
     inputs = tokenizer(
@@ -86,7 +91,6 @@ def analyze_emotion(text):
     logits = outputs.logits
     predicted_class = torch.argmax(logits, dim=1).item()
 
-    # 감정 클래스 맵핑
     emotion_map = {
         0: "공포",
         1: "놀람",
@@ -98,6 +102,17 @@ def analyze_emotion(text):
     }
     return emotion_map.get(predicted_class, "Unknown")
 
+# 양성/음성 분석 함수
+def classify_sentiment(text, positive_words, negative_words):
+    positive_count = sum(1 for word in positive_words if word in text)
+    negative_count = sum(1 for word in negative_words if word in text)
+
+    if positive_count > negative_count:
+        return "양성"
+    elif negative_count > positive_count:
+        return "음성"
+    return "중립"
+
 # BERT 문장 유사도 계산 함수
 def calculate_similarity(text1, text2):
     embedding1 = similarity_model.encode(text1, convert_to_tensor=True)
@@ -106,7 +121,7 @@ def calculate_similarity(text1, text2):
     return round(similarity_score * 100, 2)
 
 # 신뢰도 계산 함수
-def calculate_credibility(emotion, similarity_score):
+def calculate_credibility(emotion, similarity_score, sentiment):
     emotion_scores = {
         "공포": 30,
         "놀람": 50,
@@ -116,8 +131,15 @@ def calculate_credibility(emotion, similarity_score):
         "행복": 60,
         "혐오": 10
     }
+    sentiment_scores = {"양성": 50, "음성": 20, "중립": 30}
+
     emotion_score = emotion_scores.get(emotion, 0)
-    credibility = (EMOTION_WEIGHT * emotion_score) + (SIMILARITY_WEIGHT * similarity_score)
+    sentiment_score = sentiment_scores.get(sentiment, 30)
+    credibility = (
+        EMOTION_WEIGHT * emotion_score
+        + SIMILARITY_WEIGHT * similarity_score
+        + SENTIMENT_WEIGHT * sentiment_score
+    )
     return round(credibility, 2)
 
 # 크롤링 함수
@@ -168,48 +190,35 @@ def analyze():
         return jsonify({"error": "Invalid or missing URL"}), 400
 
     try:
-        # 원문 분석
         text = crawl_text_from_url(url)
         original_emotion = analyze_emotion(text)
+        original_sentiment = classify_sentiment(text, positive_words, negative_words)
         original_keywords = extract_keywords_as_single_phrase(text)
 
-        # 유사 기사 검색 및 신뢰도 계산
         similar_articles = search_similar_articles(original_keywords)
         for article in similar_articles:
             try:
                 article_text = crawl_text_from_url(article['url'])
                 similarity_score = calculate_similarity(text, article_text)
-                credibility_score = calculate_credibility(original_emotion, similarity_score)
-                article["credibility_score"] = f"{credibility_score}%"
+                article["credibility_score"] = calculate_credibility(original_emotion, similarity_score, original_sentiment)
             except Exception:
-                article["credibility_score"] = "0%"
+                article["credibility_score"] = 0.0
 
-        # 신뢰도 높은 순으로 정렬
-        sorted_articles = sorted(
-            similar_articles,
-            key=lambda x: float(x["credibility_score"].replace('%', '')),
-            reverse=True
-        )
+        overall_credibility = sum(article.get("credibility_score", 0) for article in similar_articles) / max(len(similar_articles), 1)
 
-        # 전체 신뢰도 계산
-        overall_credibility = sum(
-            float(article["credibility_score"].replace('%', '')) for article in sorted_articles
-        ) / max(len(sorted_articles), 1)
-
-        # 결과 반환
         return jsonify({
             "original_emotion": original_emotion,
+            "original_sentiment": original_sentiment,
             "original_keywords": original_keywords,
-            "credibility_score": f"{round(overall_credibility, 2)}%",
-            "similar_articles": sorted_articles[:4]  # 상위 4개만 반환
+            "credibility_score": round(overall_credibility, 2),
+            "similar_articles": similar_articles[:4]
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# HTML 렌더링 엔드포인트
 @app.route('/')
 def index():
-    return render_template('index.html')  # index.html 로드
+    return render_template('index.html')
 
 if __name__ == '__main__':
     app.run()
