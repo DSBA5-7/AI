@@ -7,6 +7,8 @@ import re
 import torch
 from transformers import BertTokenizer, BertForSequenceClassification
 from sentence_transformers import SentenceTransformer, util
+import gdown  # Google Drive에서 파일을 다운로드 하기 위한 라이브러리
+import os  # 파일 경로 확인을 위한 모듈
 
 # Flask 초기화
 app = Flask(
@@ -19,8 +21,20 @@ CORS(app)
 # KeyBERT 모델 초기화
 kw_model = KeyBERT()
 
+# Google Drive에서 .pth 파일 다운로드
+def download_model_from_drive():
+    # 구글 드라이브에서 모델 파일을 다운로드
+    file_id = "1uS2PvnVaX1geCbv34MoWi7y1TF9wM_I6"  # 여기에 파일 ID를 입력하세요.
+    output_path = 'kobert_emotion_model.pth'
+    
+    # 파일이 이미 존재하면 다운로드하지 않음
+    if not os.path.exists(output_path):
+        url = f'https://drive.google.com/uc?id={file_id}'
+        gdown.download(url, output_path, quiet=False)
+    return output_path
+
 # 감정 분석 모델 로드
-emotion_model_path = "kobert_emotion_model.pth"
+emotion_model_path = download_model_from_drive()  # 구글 드라이브에서 모델 파일을 다운로드
 emotion_model = BertForSequenceClassification.from_pretrained("monologg/kobert", num_labels=7)
 emotion_model.load_state_dict(torch.load(emotion_model_path, map_location=torch.device('cpu')))
 emotion_model.eval()
@@ -198,4 +212,4 @@ def index():
     return render_template('index.html')  # index.html 로드
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run()
