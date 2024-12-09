@@ -1,0 +1,9 @@
+Flask
+flask-cors
+keybert
+beautifulsoup4
+requests
+torch
+transformers
+sentence-transformers
+gdown
