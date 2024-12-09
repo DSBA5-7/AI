@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CreditNews</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <header>
+        <a href="{{ url_for('index') }}">
+            <p style="font-size: 30px; font-weight: bold; margin: 0; color: white;">CNS</p>
+        </a>        
+    </header>
+    <div class="container">
+        <h1>CreditNews</h1>
+        <div class="input-group">
+            <input type="text" id="detailed-address" placeholder="URL 입력">
+            <button id="search-button">Search</button>
+        </div>
+    </div>
+    <div id="results" class="container" style="display: none;">
+        <h1>신뢰도: <span id="credibility"></span></h1>
+        <div id="related-articles" class="related-articles"></div>
+    </div>
+
+    <script>
+        // URL 유효성 검사 함수
+        function isValidURL(url) {
+            const pattern = /^(https?:\/\/)?([\w\-]+(\.[\w\-]+)+)(\/[\w\-._~:/?#[\]@!$&'()*+,;=]*)?$/;
+            return pattern.test(url);
+        }
+
+        // Flask API에서 뉴스 데이터 가져오기
+        async function fetchNewsData(url) {
+            try {
+                const response = await fetch(`http://127.0.0.1:5000/analyze`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: url })
+                });
+                if (!response.ok) throw new Error('Failed to fetch data');
+                return await response.json();
+            } catch (error) {
+                console.error(error);
+                return null;
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+            const searchButton = document.getElementById('search-button');
+            searchButton.onclick = async function () {
+                const address = document.getElementById('detailed-address').value;
+                const resultDiv = document.getElementById('results');
+                const relatedArticlesList = document.getElementById('related-articles');
+                const credibilitySpan = document.getElementById('credibility');
+
+                if (!isValidURL(address)) {
+                    alert("유효한 URL을 입력하세요.");
+                    return;
+                }
+
+                const newsData = await fetchNewsData(address);
+                if (!newsData) {
+                    alert("데이터를 가져오지 못했습니다.");
+                    return;
+                }
+
+                // 신뢰도 점수 표시
+                credibilitySpan.textContent = newsData.credibility_score || "분석 실패";
+
+                // 유사 기사 목록 표시
+                relatedArticlesList.innerHTML = ""; // 기존 내용 삭제
+                newsData.similar_articles.forEach(article => {
+                    const articleCard = document.createElement('div');
+                    articleCard.className = 'article-card';
+                    articleCard.innerHTML = `
+                        <div class="article-content">
+                            <a href="${article.url}" target="_blank">
+                                <h3>${article.title}</h3>
+                            </a>
+                            <p>신뢰도: ${article.credibility_score}</p>
+                        </div>
+                    `;
+                    relatedArticlesList.appendChild(articleCard);
+                });
+
+                // 결과 화면 표시
+                resultDiv.style.display = "block";
+            };
+        });
+    </script>
+</body>
+</html>

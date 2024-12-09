@@ -20,7 +20,7 @@ CORS(app)
 kw_model = KeyBERT()
 
 # 감정 분석 모델 로드
-emotion_model_path = "AI/kobert_emotion_model.pth"
+emotion_model_path = "kobert_emotion_model.pth"
 emotion_model = BertForSequenceClassification.from_pretrained("monologg/kobert", num_labels=7)
 emotion_model.load_state_dict(torch.load(emotion_model_path, map_location=torch.device('cpu')))
 emotion_model.eval()
