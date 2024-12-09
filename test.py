@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 from keybert import KeyBERT
 from bs4 import BeautifulSoup
@@ -9,14 +9,18 @@ from transformers import BertTokenizer, BertForSequenceClassification
 from sentence_transformers import SentenceTransformer, util
 
 # Flask 초기화
-app = Flask(__name__)
+app = Flask(
+    __name__, 
+    template_folder="../FE/templates",  # HTML 폴더 경로
+    static_folder="../FE/static"        # 정적 파일 경로 (CSS, JS 등)
+)
 CORS(app)
 
 # KeyBERT 모델 초기화
 kw_model = KeyBERT()
 
 # 감정 분석 모델 로드
-emotion_model_path = "C:/AI-3/kobert_emotion_model.pth"
+emotion_model_path = "AI/kobert_emotion_model.pth"
 emotion_model = BertForSequenceClassification.from_pretrained("monologg/kobert", num_labels=7)
 emotion_model.load_state_dict(torch.load(emotion_model_path, map_location=torch.device('cpu')))
 emotion_model.eval()
@@ -161,22 +165,37 @@ def analyze():
             try:
                 article_text = crawl_text_from_url(article['url'])
                 similarity_score = calculate_similarity(text, article_text)
-                article["credibility_score"] = calculate_credibility(original_emotion, similarity_score)
+                credibility_score = calculate_credibility(original_emotion, similarity_score)
+                article["credibility_score"] = f"{credibility_score}%"
             except Exception:
-                article["credibility_score"] = 0.0
+                article["credibility_score"] = "0%"
+
+        # 신뢰도 높은 순으로 정렬
+        sorted_articles = sorted(
+            similar_articles,
+            key=lambda x: float(x["credibility_score"].replace('%', '')),
+            reverse=True
+        )
 
         # 전체 신뢰도 계산
-        overall_credibility = sum(article.get("credibility_score", 0) for article in similar_articles) / max(len(similar_articles), 1)
+        overall_credibility = sum(
+            float(article["credibility_score"].replace('%', '')) for article in sorted_articles
+        ) / max(len(sorted_articles), 1)
 
         # 결과 반환
         return jsonify({
             "original_emotion": original_emotion,
             "original_keywords": original_keywords,
-            "credibility_score": round(overall_credibility, 2),
-            "similar_articles": similar_articles[:2]  # 상위 2개만 반환
+            "credibility_score": f"{round(overall_credibility, 2)}%",
+            "similar_articles": sorted_articles[:4]  # 상위 4개만 반환
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+# HTML 렌더링 엔드포인트
+@app.route('/')
+def index():
+    return render_template('index.html')  # index.html 로드
 
 if __name__ == '__main__':
     app.run(debug=True)
