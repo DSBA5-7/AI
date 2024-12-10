@@ -201,7 +201,7 @@ def analyze():
                 "original_emotion": original_emotion,
                 "original_sentiment": original_sentiment,
                 "original_keywords": original_keywords,
-                "credibility_score": "유사기사 없음",
+                "credibility_score": "측정 불가",
                 "similar_articles": []
             })
 
@@ -212,20 +212,20 @@ def analyze():
                 credibility_score = calculate_credibility(original_emotion, similarity_score, original_sentiment)
                 article["credibility_score"] = f"{credibility_score}%"
             except Exception:
-                article["credibility_score"] = "유사기사 없음"
+                article["credibility_score"] = "측정 불가"
 
         # 신뢰도 높은 순으로 정렬
-        similar_articles.sort(key=lambda x: float(x["credibility_score"].rstrip('%')) if x["credibility_score"] != "유사기사 없음" else 0, reverse=True)
+        similar_articles.sort(key=lambda x: float(x["credibility_score"].rstrip('%')) if x["credibility_score"] != "측정 불가" else 0, reverse=True)
 
         overall_credibility = sum(
-            float(article["credibility_score"].rstrip('%')) for article in similar_articles if article["credibility_score"] != "유사기사 없음"
-        ) / max(len([a for a in similar_articles if a["credibility_score"] != "유사기사 없음"]), 1)
+            float(article["credibility_score"].rstrip('%')) for article in similar_articles if article["credibility_score"] != "측정 불가"
+        ) / max(len([a for a in similar_articles if a["credibility_score"] != "측정 불가"]), 1)
 
         return jsonify({
             "original_emotion": original_emotion,
             "original_sentiment": original_sentiment,
             "original_keywords": original_keywords,
-            "credibility_score": f"{round(overall_credibility, 2)}%" if similar_articles else "유사기사 없음",
+            "credibility_score": f"{round(overall_credibility, 2)}%" if similar_articles else "측정 불가",
             "similar_articles": similar_articles[:4]
         })
     except Exception as e:
