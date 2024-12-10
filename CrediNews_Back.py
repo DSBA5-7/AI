@@ -23,8 +23,8 @@ emotion_model.eval()
 tokenizer = BertTokenizer.from_pretrained("monologg/kobert")
 
 # Google Custom Search API 설정
-API_KEY = "your_google_api_key"  # Google Custom Search API 키
-SEARCH_ENGINE_ID = "your_search_engine_id"  # Google Custom Search 엔진 ID
+API_KEY = "AIzaSyAk_I4aQfzfPFqfaUMu3s3yGGMH826r86M"  # Google Custom Search API 키
+SEARCH_ENGINE_ID = "50c1f019089e446d1"  # Google Custom Search 엔진 ID
 
 # 텍스트 전처리 함수
 def preprocess_text(text):
