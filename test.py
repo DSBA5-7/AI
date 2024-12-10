@@ -46,7 +46,7 @@ API_KEY = "AIzaSyAk_I4aQfzfPFqfaUMu3s3yGGMH826r86M"
 SEARCH_ENGINE_ID = "50c1f019089e446d1"
 
 # CSV 파일 기반 양성/음성 단어 로드
-sentiment_words_file = "C:/AI-5/sentiment_words.csv"  # CSV 파일 경로
+sentiment_words_file = "sentiment_words.csv"  # CSV 파일 경로
 data = pd.read_csv(sentiment_words_file)
 positive_words = data[data["감정"] == "양성"]["단어"].tolist()
 negative_words = data[data["감정"] == "음성"]["단어"].tolist()
@@ -131,7 +131,7 @@ def calculate_credibility(emotion, similarity_score, sentiment):
         "행복": 60,
         "혐오": 10
     }
-    sentiment_scores = {"양성": 50, "음성": 20, "중립": 30}
+    sentiment_scores = {"양성": 40, "음성": 40, "중립": 20}
 
     emotion_score = emotion_scores.get(emotion, 0)
     sentiment_score = sentiment_scores.get(sentiment, 30)
@@ -196,29 +196,45 @@ def analyze():
         original_keywords = extract_keywords_as_single_phrase(text)
 
         similar_articles = search_similar_articles(original_keywords)
+        if not similar_articles:
+            return jsonify({
+                "original_emotion": original_emotion,
+                "original_sentiment": original_sentiment,
+                "original_keywords": original_keywords,
+                "credibility_score": "유사기사 없음",
+                "similar_articles": []
+            })
+
         for article in similar_articles:
             try:
                 article_text = crawl_text_from_url(article['url'])
                 similarity_score = calculate_similarity(text, article_text)
-                article["credibility_score"] = calculate_credibility(original_emotion, similarity_score, original_sentiment)
+                credibility_score = calculate_credibility(original_emotion, similarity_score, original_sentiment)
+                article["credibility_score"] = f"{credibility_score}%"
             except Exception:
-                article["credibility_score"] = 0.0
+                article["credibility_score"] = "유사기사 없음"
 
-        overall_credibility = sum(article.get("credibility_score", 0) for article in similar_articles) / max(len(similar_articles), 1)
+        # 신뢰도 높은 순으로 정렬
+        similar_articles.sort(key=lambda x: float(x["credibility_score"].rstrip('%')) if x["credibility_score"] != "유사기사 없음" else 0, reverse=True)
+
+        overall_credibility = sum(
+            float(article["credibility_score"].rstrip('%')) for article in similar_articles if article["credibility_score"] != "유사기사 없음"
+        ) / max(len([a for a in similar_articles if a["credibility_score"] != "유사기사 없음"]), 1)
 
         return jsonify({
             "original_emotion": original_emotion,
             "original_sentiment": original_sentiment,
             "original_keywords": original_keywords,
-            "credibility_score": round(overall_credibility, 2),
+            "credibility_score": f"{round(overall_credibility, 2)}%" if similar_articles else "유사기사 없음",
             "similar_articles": similar_articles[:4]
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
 if __name__ == '__main__':
-    app.run()
+    app.run(debug=True)
